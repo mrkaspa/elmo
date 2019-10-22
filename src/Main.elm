@@ -1,16 +1,11 @@
--- elm install elm-explorations/linear-algebra
--- elm install elm-explorations/webgl
-
-
-module Main exposing (Model, Msg(..), Uniforms, Vertex, fragmentShader, init, main, mesh, perspective, subscriptions, update, vertexShader, view)
+module Main exposing (Model(..), Msg(..), getRandomCatGif, gifDecoder, init, main, subscriptions, update, view, viewGif)
 
 import Browser
-import Browser.Events as E
-import Html exposing (Html)
-import Html.Attributes exposing (height, style, width)
-import Math.Matrix4 as Mat4 exposing (Mat4)
-import Math.Vector3 as Vec3 exposing (Vec3, vec3)
-import WebGL
+import Html exposing (..)
+import Html.Attributes exposing (..)
+import Html.Events exposing (..)
+import Http
+import Json.Decode exposing (Decoder, field, string)
 
 
 
@@ -20,9 +15,9 @@ import WebGL
 main =
     Browser.element
         { init = init
-        , view = view
         , update = update
         , subscriptions = subscriptions
+        , view = view
         }
 
 
@@ -30,13 +25,15 @@ main =
 -- MODEL
 
 
-type alias Model =
-    Float
+type Model
+    = Failure
+    | Loading
+    | Success String
 
 
 init : () -> ( Model, Cmd Msg )
-init () =
-    ( 0, Cmd.none )
+init _ =
+    ( Loading, getRandomCatGif )
 
 
 
@@ -44,14 +41,23 @@ init () =
 
 
 type Msg
-    = TimeDelta Float
+    = MorePlease
+    | GotGif (Result Http.Error String)
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
-update msg currentTime =
+update msg model =
     case msg of
-        TimeDelta delta ->
-            ( delta + currentTime, Cmd.none )
+        MorePlease ->
+            ( Loading, getRandomCatGif )
+
+        GotGif result ->
+            case result of
+                Ok url ->
+                    ( Success url, Cmd.none )
+
+                Err _ ->
+                    ( Failure, Cmd.none )
 
 
 
@@ -59,83 +65,58 @@ update msg currentTime =
 
 
 subscriptions : Model -> Sub Msg
-subscriptions _ =
-    E.onAnimationFrameDelta TimeDelta
+subscriptions model =
+    Sub.none
 
 
 
 -- VIEW
 
 
-view : Model -> Html msg
-view t =
-    WebGL.toHtml
-        [ width 400
-        , height 400
-        , style "display" "block"
-        ]
-        [ WebGL.entity vertexShader fragmentShader mesh { perspective = perspective (t / 1000) }
+view : Model -> Html Msg
+view model =
+    div []
+        [ h2 [] [ text "Random Cats" ]
+        , viewGif model
         ]
 
 
-perspective : Float -> Mat4
-perspective t =
-    Mat4.mul
-        (Mat4.makePerspective 45 1 0.01 100)
-        (Mat4.makeLookAt (vec3 (4 * cos t) 0 (4 * sin t)) (vec3 0 0 0) (vec3 0 1 0))
+viewGif : Model -> Html Msg
+viewGif model =
+    case model of
+        Failure ->
+            div []
+                [ text "I could not load a random cat for some reason. "
+                , button [ onClick MorePlease ] [ text "Try Again!" ]
+                ]
+
+        Loading ->
+            text "Loading..."
+
+        Success url ->
+            div []
+                [ button
+                    [ style "display" "block"
+                    , style "margin-bottom" "10px"
+                    , onClick MorePlease
+                    ]
+                    [ text "More Please!" ]
+                , img [ src url ] []
+                ]
 
 
 
--- MESH
+-- HTTP
 
 
-type alias Vertex =
-    { position : Vec3
-    , color : Vec3
-    }
-
-
-mesh : WebGL.Mesh Vertex
-mesh =
-    WebGL.triangles
-        [ ( Vertex (vec3 0 0 0) (vec3 1 0 0)
-          , Vertex (vec3 1 1 0) (vec3 0 1 0)
-          , Vertex (vec3 1 -1 0) (vec3 0 0 1)
-          )
-        ]
-
-
-
--- SHADERS
-
-
-type alias Uniforms =
-    { perspective : Mat4
-    }
-
-
-vertexShader : WebGL.Shader Vertex Uniforms { vcolor : Vec3 }
-vertexShader =
-    [glsl|
-        attribute vec3 position;
-        attribute vec3 color;
-        uniform mat4 perspective;
-        varying vec3 vcolor;
-
-        void main () {
-            gl_Position = perspective * vec4(position, 1.0);
-            vcolor = color;
+getRandomCatGif : Cmd Msg
+getRandomCatGif =
+    Http.get
+        { url = "https://api.giphy.com/v1/gifs/random?api_key=dc6zaTOxFJmzC&tag=cat"
+        , expect = Http.expectJson GotGif gifDecoder
         }
-    |]
 
 
-fragmentShader : WebGL.Shader {} Uniforms { vcolor : Vec3 }
-fragmentShader =
-    [glsl|
-        precision mediump float;
-        varying vec3 vcolor;
-
-        void main () {
-            gl_FragColor = vec4(vcolor, 1.0);
-        }
-    |]
+gifDecoder : Decoder String
+gifDecoder =
+    field "data" (field "image_url" string)
